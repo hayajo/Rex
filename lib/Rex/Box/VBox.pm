@@ -172,6 +172,18 @@ sub import_vm {
                vm option => $self->{name},
                   "bridgeadapter$nic_no" => ($option->{$nic_no}->{bridge} || "eth0");
             }
+            elsif($option->{$nic_no}->{type} eq "hostonly") {
+               die("Unsupported type 'hostonly'");
+               # TODO
+               # my $ip = $option->{$nic_no}->{ip};
+               # my $netmask = $option->{$nic_no}->{netmask}; # default: 255.255.255.0
+               # my $type = $option->{$nic_no}->{type}; # (static|dhcp) default: static
+               # ...
+               # ...
+               # my $if = create_hostonly_interface($option->{$nic_no});
+               # vm option => $self->{name},
+                  # "hostonlyadapter$nic_no" => $if->{name};
+            }
          }
 
          if($option->{$nic_no}->{driver}) {
