@@ -175,14 +175,9 @@ sub import_vm {
             elsif($option->{$nic_no}->{type} eq "hostonly") {
                die("Unsupported type 'hostonly'");
                # TODO
-               # my $ip = $option->{$nic_no}->{ip};
-               # my $netmask = $option->{$nic_no}->{netmask}; # default: 255.255.255.0
-               # my $type = $option->{$nic_no}->{type}; # (static|dhcp) default: static
-               # ...
-               # ...
-               # my $if = create_hostonly_interface($option->{$nic_no});
-               # vm option => $self->{name},
-                  # "hostonlyadapter$nic_no" => $if->{name};
+               my $if = create_hostonly_interface($option->{$nic_no});
+               vm option => $self->{name},
+                  "hostonlyadapter$nic_no" => $if->{name};
             }
          }
 
@@ -276,6 +271,123 @@ sub select_bridge {
    }
 
    return $ifname;
+}
+
+sub create_hostonly_interface {
+    my $option = {
+        netmask => "255.255.255.0",
+        type   => 'static', #  static or dhcp
+        # name => undef, #  hostonly_adapter_name
+        %$_[0],
+    };
+    $option->{ip} = "172.28.128.1" if ( $option->{type} eq 'dhcp' );
+    my $netaddr = network_address( $option->{ip}, $option->{netmask} );
+
+    if (is_collision_network_address($netaddr) ) {
+        # TODO network collision
+        die;
+    }
+
+    $option->{adapter_ip} ||= calculate_adapter_address($netaddr);
+
+    if $option->{type} eq "dhcp" {
+        my $dhcp_option = calculate_dhcp_option($netaddr)
+        $option = {
+            %$option,
+            %$dhcp_option,
+        };
+    };
+
+    my $if = find_matching_hostonlyif($option);
+
+    if ( !$if ) {
+        Rex::Logger::info("Network not found. Creating if we can.");
+        if ( $option->{name} ) {
+            # TODO no such network
+            die;
+        }
+
+        $if = vm "hostonly", %$option; # create a hostonlyif
+        Rex::Logger::info("Created network '$if->{name}'");
+    }
+
+    if ($option->{type} eq 'dhcp') {
+        if (my $if_dhcp = $if->{dhcp}) {
+            my $valid = (
+                $if_dhcp->{ip} eq $option->{dhcp_ip} &&
+                $if_dhcp->{lower} eq $option->{dhcp_lower} &&
+                $if_dhcp->{upper} eq $option->{dhcp_upper}
+            );
+            # TODO can't attach DHCP server
+            die unless ($valid);
+
+            Rex::Logger::debug("DHCP server already properly configured");
+        }
+        else {
+            Rex::Logger::debug("Creating a DHCP server...");
+            vm "dhcpserver", $if->{name}, $option; # create a DHCP server
+        }
+    }
+
+    return $if;
+}
+
+sub network_address {
+    my ($ip, $netmask) = @_;
+    my @ip      = map { int($_) } spilit /\./, $ip;
+    my @netmask = map { int($_) } spilit /\./, $netmask;
+    join ".", map { $_ & shift(@netmask) } @ip;
+}
+
+sub is_collision_network_address {
+    my $netaddr = shift;
+    my $bridgedifs = vm "bridge";
+    for my $if (@$bridgedifs) {
+        my $if_netaddr = network_address($if->{ip}, $if->{netmask});
+        if ( $netaddr eq $if_netaddr && $if->{status} !~ /^down$/i ) {
+            return 1;
+        }
+    }
+}
+
+sub calculate_adapter_address {
+    my $ip = shift;
+    my @ip = map { int($_) } spilit /\./, $ip;
+    $ip[3] += 1;
+    join ".", @ip;
+}
+
+sub calculate_dhcp_option {
+    my $ip = shift;
+    my @ip = map { int($_) } spilit /\./, $ip;
+    my $option = {};
+    # ip
+    {
+        local $ip[3] += 2;
+        $option->{dhcp_ip} = join ".", @ip;
+    }
+    # lower
+    {
+        local $ip[3] += 3;
+        $option->{dhcp_lower} = join ".", @ip;
+    }
+    # upper
+    {
+        local $ip[3] = 254
+        $option->{dhcp_upper} = join ".", @ip;
+    }
+    return $option;
+}
+
+sub find_matching_hostonlyif {
+    my $option      = shift;
+    my $netaddr     = network_address( $option->{ip}, $option->{netmask} );
+    my $hostonlyifs = vm "hostonly";
+    for my $if (@$hostonlyifs) {
+        return $if if ( $option->{name} && $option->{name} eq $if->{name} );
+        my $if_netaddr = network_address( $if->{ip}, $if->{netmask} );
+        return $if if ( $netaddr eq $if_netaddr );
+    }
 }
 
 =item forward_port(%option)
